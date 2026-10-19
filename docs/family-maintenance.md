@@ -111,6 +111,14 @@ python3 scripts/family_mac.py --root ../deployment install \
   --docker-context colima-stock
 ```
 
+安装后生成 `deployment/stockctl`，已选择正确 Docker context 和工具路径，可直接运行：
+
+```bash
+~/Services/family-stock/deployment/stockctl status
+~/Services/family-stock/deployment/stockctl backup
+~/Services/family-stock/deployment/stockctl check-updates
+```
+
 用户级 LaunchAgent 在用户登录后运行，不是未登录时的系统服务：
 
 - 每 2 分钟恢复已部署的固定镜像，不自动换版本。

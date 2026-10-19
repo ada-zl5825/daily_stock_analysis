@@ -322,6 +322,7 @@ class FamilyOps:
     @contextlib.contextmanager
     def stopped(self, environment):
         previous = self.running(environment)
+        allow_uninitialized = not self.manifest(environment).get("public_ready", False)
         try:
             if previous:
                 self.compose(environment, "stop", "--timeout", "60", *previous)
@@ -331,6 +332,10 @@ class FamilyOps:
         finally:
             if previous:
                 self.compose(environment, "start", *previous)
+                if "server" in previous:
+                    # Compose start only confirms the process launch. Do not release
+                    # maintenance or report success before HTTP/auth/DB are usable.
+                    self.smoke(environment, allow_uninitialized=allow_uninitialized)
 
     def image(self, image):
         result = self.run(["docker", "image", "inspect", "--format", "{{.Id}}", image])

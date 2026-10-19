@@ -129,6 +129,63 @@ class FamilyOpsTest(unittest.TestCase):
         self.assertEqual(self.ops.services["production"], ["server", "analyzer"])
         self.assertEqual(list((self.root / "backups").iterdir()), [])
 
+    def test_backup_waits_for_http_auth_and_database_after_container_start(self):
+        self.production()
+        original_request = self.ops.request
+        health_attempts = []
+        db_checks = []
+
+        def request(port, route):
+            if route == "/api/health":
+                self.assertIn(("production", ("start", "server", "analyzer")), self.ops.calls)
+                health_attempts.append(route)
+                if len(health_attempts) == 1:
+                    return 0, {}  # Process started, HTTP is not accepting requests yet.
+            return original_request(port, route)
+
+        def database(environment):
+            db_checks.append(environment)
+            return {"ok": True, "account_count": 0}
+
+        self.ops.request = request
+        self.ops.db_smoke = database
+        self.ops.smoke = lambda environment, **kwargs: ops.FamilyOps.smoke(self.ops, environment, **kwargs)
+        with patch.object(ops.time, "sleep") as sleep:
+            result = self.ops.backup("production")
+        self.assertTrue(result["verified"])
+        self.assertEqual(len(health_attempts), 2)
+        self.assertEqual(db_checks, ["production"])
+        sleep.assert_called_once()
+
+    def test_backup_resume_failure_does_not_report_success(self):
+        self.production()
+        with patch.object(self.ops, "smoke", side_effect=ops.OpsError("restart unavailable")):
+            with self.assertRaisesRegex(ops.OpsError, "restart unavailable"):
+                self.ops.backup("production")
+        backups = list((self.root / "backups").iterdir())
+        self.assertEqual(len(backups), 1)
+        self.ops.verify_backup(backups[0])  # Snapshot survives failed service recovery.
+
+    def test_stopped_restore_uses_bootstrap_state_from_original_manifest(self):
+        self.production()
+        manifest = self.ops.manifest("production")
+        manifest["public_ready"] = False
+        ops.write_json(self.ops.env_dir("production") / "deployment.json", manifest)
+        with patch.object(self.ops, "smoke", return_value={}) as smoke:
+            with self.ops.stopped("production"):
+                pass
+        smoke.assert_called_once_with("production", allow_uninitialized=True)
+
+    def test_stage_aborts_before_staging_mutation_when_production_restart_fails(self):
+        self.production()
+        staged_env = self.ops.env_dir("staging") / "data/runtime.env"
+        before = staged_env.read_bytes()
+        with patch.object(self.ops, "smoke", side_effect=ops.OpsError("production unavailable")):
+            with self.assertRaisesRegex(ops.OpsError, "production unavailable"):
+                self.ops.stage(IMAGE_B)
+        self.assertEqual(staged_env.read_bytes(), before)
+        self.assertFalse(any(environment == "staging" for environment, _ in self.ops.calls))
+
     def test_hash_tampering_refused_before_stopping_services(self):
         self.production()
         result = self.ops.backup("production")
