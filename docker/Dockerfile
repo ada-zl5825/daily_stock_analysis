@@ -40,9 +40,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxext6 \
     && rm -rf /var/lib/apt/lists/*
 
-# 创建非 root 用户 (UID 1000)
-RUN groupadd -g 1000 dsa && \
-    useradd -u 1000 -g dsa -m dsa
+# Defaults preserve upstream images; a local bind-mount deployment may match
+# the host UID/GID without granting world-write access to credentials or data.
+ARG DSA_UID=1000
+ARG DSA_GID=1000
+RUN if ! getent group "$DSA_GID" > /dev/null; then groupadd -g "$DSA_GID" dsa; fi && \
+    useradd -u "$DSA_UID" -g "$DSA_GID" -m dsa
 
 # 复制依赖文件
 COPY requirements.txt .
@@ -67,7 +70,7 @@ RUN mkdir -p /tmp/futu-sdk-smoke-home && \
 
 # 确保数据目录存在并授权给 non-root 用户
 RUN mkdir -p /app/data /app/logs /app/reports && \
-    chown -R dsa:dsa /app && \
+    chown -R "$DSA_UID:$DSA_GID" /app && \
     chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # efinance 将搜索缓存（search-cache.json）写入自身安装包内的 data 目录，
@@ -76,7 +79,7 @@ RUN mkdir -p /app/data /app/logs /app/reports && \
 # 动态解析路径，避免写死 Python 版本目录。
 RUN EF_DATA_DIR="$(python -c 'import efinance, pathlib; print(pathlib.Path(efinance.__file__).parent / "data")')" && \
     mkdir -p "$EF_DATA_DIR" && \
-    chown -R dsa:dsa "$EF_DATA_DIR"
+    chown -R "$DSA_UID:$DSA_GID" "$EF_DATA_DIR"
 
 # 设置环境变量默认值
 ENV PYTHONUNBUFFERED=1

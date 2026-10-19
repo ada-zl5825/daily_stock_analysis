@@ -135,7 +135,13 @@ def _prepare_fake_entrypoint_tools(tmp_path: Path, find_body: str) -> tuple[Path
     _write_fake_command(
         fakebin,
         "id",
-        'if [ "${1:-}" = "-u" ]; then printf "0\\n"; else printf "0\\n"; fi\n',
+        'case "$*" in\n'
+        '  "-u dsa") printf "501\\n" ;;\n'
+        '  "-g dsa") printf "20\\n" ;;\n'
+        '  "-gn dsa") printf "dialout\\n" ;;\n'
+        '  "-u") printf "%s\\n" "${CURRENT_UID:-0}" ;;\n'
+        '  *) exit 1 ;;\n'
+        'esac\n',
     )
     _write_fake_command(fakebin, "mkdir", "exit 0\n")
     _write_fake_command(fakebin, "find", find_body)
@@ -154,6 +160,7 @@ def _prepare_fake_entrypoint_tools(tmp_path: Path, find_body: str) -> tuple[Path
     _write_fake_command(
         fakebin,
         "gosu",
+        'printf "%s\\n" "$1" >> "$FAKE_LOG_DIR/gosu.log"\n'
         'shift\n'
         'case "$1" in\n'
         '    sh|test) exit "${GOSU_WRITE_EXIT:-0}" ;;\n'
@@ -208,6 +215,8 @@ def test_docker_entrypoint_repairs_nested_mount_ownership(tmp_path: Path) -> Non
     assert "/app/logs" in chown_log
     assert "/app/reports" in chown_log
     assert "/app/data" in chmod_log
+    assert "-R 501:20 /app/data" in chown_log
+    assert "dsa:dialout" in (log_dir / "gosu.log").read_text(encoding="utf-8")
 
 
 def test_docker_entrypoint_skips_owner_chmod_when_chown_fails(tmp_path: Path) -> None:
@@ -227,3 +236,17 @@ def test_docker_entrypoint_skips_owner_chmod_when_chown_fails(tmp_path: Path) ->
     assert not (log_dir / "chmod.log").exists()
     assert "skipping owner-only chmod" in result.stderr
     assert "still not writable by dsa" in result.stderr
+
+
+def test_nonroot_entrypoint_preserves_home_without_chown(tmp_path: Path) -> None:
+    fakebin, log_dir = _prepare_fake_entrypoint_tools(tmp_path, "exit 0\n")
+    env = os.environ.copy()
+    env.update({"PATH": f"{fakebin}:{env['PATH']}", "FAKE_LOG_DIR": str(log_dir),
+                "CURRENT_UID": "501", "HOME": "/app/data/home"})
+    result = subprocess.run(
+        ["sh", str(REPO_ROOT / "docker" / "entrypoint.sh"), "sh", "-c", 'printf "%s" "$HOME"'],
+        check=True, capture_output=True, text=True, env=env,
+    )
+    assert result.stdout == "/app/data/home"
+    assert not (log_dir / "chown.log").exists()
+    assert not (log_dir / "gosu.log").exists()

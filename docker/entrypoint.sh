@@ -2,9 +2,9 @@
 set -eu
 
 APP_USER="dsa"
-APP_GROUP="dsa"
-APP_UID="1000"
-APP_GID="1000"
+APP_GROUP="$(id -gn "$APP_USER")"
+APP_UID="$(id -u "$APP_USER")"
+APP_GID="$(id -g "$APP_USER")"
 WRITABLE_DIRS="/app/data /app/logs /app/reports /home/dsa/.longbridge"
 DATABASE_FILE="${DATABASE_PATH:-/app/data/stock_analysis.db}"
 

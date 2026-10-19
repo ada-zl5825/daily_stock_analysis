@@ -1,0 +1,80 @@
+# Kept separate from upstream's Compose file so upstream upgrades remain small.
+# family_ops.py supplies paths and an immutable image ID; secrets stay in runtime.env.
+services:
+  server:
+    image: ${FAMILY_IMAGE:?Run family_ops.py build or deploy with a pinned image}
+    pull_policy: never
+    restart: unless-stopped
+    user: "${FAMILY_UID:-1000}:${FAMILY_GID:-1000}"
+    init: true
+    command: ["python", "main.py", "--serve-only", "--host", "0.0.0.0", "--port", "8000", "--no-run-immediately"]
+    environment:
+      TZ: Asia/Shanghai
+      HOME: /app/data/home
+      ENV_FILE: /app/data/runtime.env
+      DATABASE_PATH: /app/data/stock_analysis.db
+      LOG_DIR: /app/logs
+      AGENT_SKILL_DIR: /app/custom-strategies
+      WEBUI_HOST: 0.0.0.0
+      WEBUI_AUTO_BUILD: "false"
+      API_PORT: "8000"
+      SCHEDULE_ENABLED: ${FAMILY_SCHEDULE_ENABLED:-false}
+      SCHEDULE_RUN_IMMEDIATELY: "false"
+      RUN_IMMEDIATELY: "false"
+    ports:
+      - "127.0.0.1:${FAMILY_PORT:-8000}:8000"
+    volumes:
+      - "${FAMILY_DATA_DIR:?Set the environment data directory}:/app/data"
+      - "${FAMILY_LOGS_DIR:?Set the environment logs directory}:/app/logs"
+      - "${FAMILY_REPORTS_DIR:?Set the environment reports directory}:/app/reports"
+      - "${FAMILY_STRATEGIES_DIR:?Set the environment strategies directory}:/app/custom-strategies:ro"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import json,urllib.request; r=urllib.request.urlopen('http://127.0.0.1:8000/api/health',timeout=5); assert r.status==200 and json.load(r).get('status')=='ok'"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+    stop_grace_period: 60s
+    mem_limit: 2g
+    cpus: "2.0"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Reserved for explicit CLI-based schedules. The standard deployment uses the
+  # server's existing scheduler and never starts a second scheduling process.
+  analyzer:
+    profiles: ["scheduler"]
+    image: ${FAMILY_IMAGE:?Set a pinned image}
+    pull_policy: never
+    restart: unless-stopped
+    user: "${FAMILY_UID:-1000}:${FAMILY_GID:-1000}"
+    init: true
+    command: ["python", "main.py", "--schedule", "--no-run-immediately"]
+    environment:
+      TZ: Asia/Shanghai
+      HOME: /app/data/home
+      ENV_FILE: /app/data/runtime.env
+      DATABASE_PATH: /app/data/stock_analysis.db
+      LOG_DIR: /app/logs
+      AGENT_SKILL_DIR: /app/custom-strategies
+      SCHEDULE_ENABLED: ${FAMILY_SCHEDULE_ENABLED:-false}
+      SCHEDULE_RUN_IMMEDIATELY: "false"
+      RUN_IMMEDIATELY: "false"
+    volumes:
+      - "${FAMILY_DATA_DIR:?Set the environment data directory}:/app/data"
+      - "${FAMILY_LOGS_DIR:?Set the environment logs directory}:/app/logs"
+      - "${FAMILY_REPORTS_DIR:?Set the environment reports directory}:/app/reports"
+      - "${FAMILY_STRATEGIES_DIR:?Set the environment strategies directory}:/app/custom-strategies:ro"
+    # The upstream image's HTTP healthcheck does not apply to a scheduler process.
+    healthcheck:
+      disable: true
+    stop_grace_period: 60s
+    mem_limit: 2g
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
